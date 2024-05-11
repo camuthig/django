@@ -4,6 +4,7 @@ Classes to represent the definitions of aggregate functions.
 
 from django.core.exceptions import FieldError, FullResultSet
 from django.db.models.expressions import Case, Func, Star, Value, When
+from django.db.models.expressions import OrderByList
 from django.db.models.fields import IntegerField
 from django.db.models.functions.comparison import Coalesce
 from django.db.models.functions.mixins import (
@@ -24,21 +25,38 @@ __all__ = [
 
 
 class Aggregate(Func):
-    template = "%(function)s(%(distinct)s%(expressions)s)"
+    template = "%(function)s(%(distinct)s%(expressions)s %(order_by)s)"
     contains_aggregate = True
     name = None
     filter_template = "%s FILTER (WHERE %%(filter)s)"
     window_compatible = True
     allow_distinct = False
     empty_result_set_value = None
+    allow_ordering = False
 
     def __init__(
-        self, *expressions, distinct=False, filter=None, default=None, **extra
+        self,
+        *expressions,
+        distinct=False,
+        filter=None,
+        default=None,
+        order_by=None,
+        **extra,
     ):
         if distinct and not self.allow_distinct:
             raise TypeError("%s does not allow distinct." % self.__class__.__name__)
         if default is not None and self.empty_result_set_value is not None:
             raise TypeError(f"{self.__class__.__name__} does not allow default.")
+        if order_by and not self.allow_ordering:
+            raise TypeError(f"{self.__class__.__name__} does not allow ordering.")
+
+        if not order_by:
+            self.order_by = None
+        elif isinstance(order_by, (list, tuple)):
+            self.order_by = OrderByList(*order_by)
+        else:
+            self.order_by = OrderByList(order_by)
+
         self.distinct = distinct
         self.filter = filter
         self.default = default
@@ -50,10 +68,10 @@ class Aggregate(Func):
 
     def get_source_expressions(self):
         source_expressions = super().get_source_expressions()
-        return source_expressions + [self.filter]
+        return source_expressions + [self.filter, self.order_by]
 
     def set_source_expressions(self, exprs):
-        *exprs, self.filter = exprs
+        *exprs, self.filter, self.order_by = exprs
         return super().set_source_expressions(exprs)
 
     def resolve_expression(
@@ -66,6 +84,11 @@ class Aggregate(Func):
             if c.filter
             else None
         )
+        c.order_by = (
+            c.order_by.resolve_expression(query, allow_joins, reuse, summarize)
+            if c.order_by
+            else None
+        )
         if summarize:
             # Summarized aggregates cannot refer to summarized aggregates.
             for ref in c.get_refs():
@@ -75,7 +98,7 @@ class Aggregate(Func):
                     )
         elif not self.is_summary:
             # Call Aggregate.get_source_expressions() to avoid
-            # returning self.filter and including that in this loop.
+            # returning self.filter and self.order_by and including those in this loop.
             expressions = super(Aggregate, c).get_source_expressions()
             for index, expr in enumerate(expressions):
                 if expr.contains_aggregate:
@@ -116,6 +139,11 @@ class Aggregate(Func):
 
     def as_sql(self, compiler, connection, **extra_context):
         extra_context["distinct"] = "DISTINCT " if self.distinct else ""
+
+        order_by_sql, order_by_params = "", []
+        if connection.features.supports_aggregate_order_by_clause and self.order_by:
+            order_by_sql, order_by_params = self.order_by.as_sql(compiler, connection)
+
         if self.filter:
             if connection.features.supports_aggregate_filter_clause:
                 try:
@@ -131,19 +159,28 @@ class Aggregate(Func):
                         connection,
                         template=template,
                         filter=filter_sql,
+                        order_by=order_by_sql,
                         **extra_context,
                     )
-                    return sql, (*params, *filter_params)
+                    return sql, (*params, *order_by_params, *filter_params)
             else:
                 copy = self.copy()
                 copy.filter = None
                 source_expressions = copy.get_source_expressions()
                 condition = When(self.filter, then=source_expressions[0])
-                copy.set_source_expressions([Case(condition)] + source_expressions[1:])
+                # WIP Is this the right way to drop the order by into this behavior?
+                copy.set_source_expressions(
+                    [Case(condition)] + source_expressions[1:] + [self.order_by]
+                )
                 return super(Aggregate, copy).as_sql(
                     compiler, connection, **extra_context
                 )
-        return super().as_sql(compiler, connection, **extra_context)
+
+        sql, params = super().as_sql(
+            compiler, connection, order_by=order_by_sql, **extra_context
+        )
+
+        return sql, (*params, *order_by_params)
 
     def _get_repr_options(self):
         options = super()._get_repr_options()
@@ -151,6 +188,8 @@ class Aggregate(Func):
             options["distinct"] = self.distinct
         if self.filter:
             options["filter"] = self.filter
+        if self.order_by:
+            options["order_by"] = self.order_by
         return options
 
 

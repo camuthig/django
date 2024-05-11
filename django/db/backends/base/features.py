@@ -256,6 +256,7 @@ class BaseDatabaseFeatures:
     # Does the database support SQL 2003 FILTER (WHERE ...) in aggregate
     # expressions?
     supports_aggregate_filter_clause = False
+    supports_aggregate_order_by_clause = False
 
     # Does the backend support indexing a TextField?
     supports_index_on_text_field = True

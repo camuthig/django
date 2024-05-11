@@ -34,6 +34,10 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_frame_range_fixed_distance = True
     supports_frame_exclusion = True
     supports_aggregate_filter_clause = True
+    supports_aggregate_order_by_clause = Database.sqlite_version_info >= (3, 44, 0)
+    supports_order_by_nulls_modifier = Database.sqlite_version_info >= (3, 30, 0)
+    # NULLS LAST/FIRST emulation on < 3.30 requires subquery wrapping.
+    requires_compound_order_by_subquery = Database.sqlite_version_info < (3, 30)
     order_by_nulls_first = True
     supports_json_field_contains = False
     supports_update_conflicts = True

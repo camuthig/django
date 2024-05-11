@@ -1,8 +1,6 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db.models import Aggregate, BooleanField, JSONField, TextField, Value
 
-from .mixins import OrderableAggMixin
-
 __all__ = [
     "ArrayAgg",
     "BitAnd",
@@ -15,10 +13,15 @@ __all__ = [
 ]
 
 
-class ArrayAgg(OrderableAggMixin, Aggregate):
+class ArrayAgg(Aggregate):
     function = "ARRAY_AGG"
-    template = "%(function)s(%(distinct)s%(expressions)s %(ordering)s)"
     allow_distinct = True
+    allow_ordering = True
+
+    def __init__(self, *expressions, ordering=(), **extra):
+        # Ordering is supported for backwards compatibility and should be deprecated
+        # in favor of the order_by argument.
+        super().__init__(*expressions, order_by=ordering, **extra)
 
     @property
     def output_field(self):
@@ -47,19 +50,24 @@ class BoolOr(Aggregate):
     output_field = BooleanField()
 
 
-class JSONBAgg(OrderableAggMixin, Aggregate):
+class JSONBAgg(Aggregate):
     function = "JSONB_AGG"
-    template = "%(function)s(%(distinct)s%(expressions)s %(ordering)s)"
     allow_distinct = True
+    allow_ordering = True
     output_field = JSONField()
 
+    def __init__(self, *expressions, ordering=(), **extra):
+        # Ordering is supported for backwards compatibility and should be deprecated
+        # in favor of the order_by argument.
+        super().__init__(*expressions, order_by=ordering, **extra)
 
-class StringAgg(OrderableAggMixin, Aggregate):
+
+class StringAgg(Aggregate):
     function = "STRING_AGG"
-    template = "%(function)s(%(distinct)s%(expressions)s %(ordering)s)"
     allow_distinct = True
+    allow_ordering = True
     output_field = TextField()
 
-    def __init__(self, expression, delimiter, **extra):
+    def __init__(self, expression, delimiter, ordering=(), **extra):
         delimiter_expr = Value(str(delimiter))
-        super().__init__(expression, delimiter_expr, **extra)
+        super().__init__(expression, delimiter_expr, order_by=ordering, **extra)
