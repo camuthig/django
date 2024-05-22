@@ -29,7 +29,7 @@ from django.db.models import (
     Value,
     Variance,
     When,
-    Window,
+    Window, Aggregate,
 )
 from django.db.models.expressions import Func, RawSQL
 from django.db.models.functions import (
@@ -1286,23 +1286,18 @@ class AggregateTestCase(TestCase):
             Book.objects.annotate(Max("id")).annotate(my_max=MyMax("id__max", "price"))
 
     def test_multi_arg_aggregate(self):
-        class MyMax(Max):
+        class MultiArgAgg(Max):
             output_field = DecimalField()
 
-            def as_sql(self, compiler, connection):
-                copy = self.copy()
-                copy.set_source_expressions(copy.get_source_expressions()[0:1] + [None])
-                return super(MyMax, copy).as_sql(compiler, connection)
-
         with self.assertRaisesMessage(TypeError, "Complex aggregates require an alias"):
-            Book.objects.aggregate(MyMax("pages", "price"))
+            Book.objects.aggregate(MultiArgAgg("pages", "price"))
 
         with self.assertRaisesMessage(
             TypeError, "Complex annotations require an alias"
         ):
-            Book.objects.annotate(MyMax("pages", "price"))
+            Book.objects.annotate(MultiArgAgg("pages", "price"))
 
-        Book.objects.aggregate(max_field=MyMax("pages", "price"))
+        Book.objects.aggregate(max_field=MultiArgAgg("pages", "price"))
 
     def test_add_implementation(self):
         class MySum(Sum):
@@ -1315,6 +1310,8 @@ class AggregateTestCase(TestCase):
                 "function": self.function.lower(),
                 "expressions": sql,
                 "distinct": "",
+                "filter": "",
+                "order_by": "",
             }
             substitutions.update(self.extra)
             return self.template % substitutions, params
@@ -1348,7 +1345,13 @@ class AggregateTestCase(TestCase):
 
         # test overriding all parts of the template
         def be_evil(self, compiler, connection):
-            substitutions = {"function": "MAX", "expressions": "2", "distinct": ""}
+            substitutions = {
+                "function": "MAX",
+                "expressions": "2",
+                "distinct": "",
+                "filter": "",
+                "order_by": "",
+            }
             substitutions.update(self.extra)
             return self.template % substitutions, ()
 
