@@ -2265,6 +2265,43 @@ class OperationTests(OperationTestBase):
         self.assertEqual(definition[1], [])
         self.assertEqual(sorted(definition[2]), ["field", "model_name", "name"])
 
+    def test_alter_field_preserve_default(self):
+        project_state = self.set_up_test_model("test_adflpd")
+        project_state = self.apply_operations(
+            "test_adflpd",
+            project_state,
+            [
+                migrations.AddField(
+                    "Pony",
+                    name="name",
+                    field=models.CharField(null=True, max_length=40),
+                ),
+            ],
+        )
+        operation = migrations.AlterField(
+            "Pony",
+            "name",
+            models.CharField(
+                blank=True, default="", max_length=40,
+            ),
+            preserve_default=False,
+        )
+        new_state = project_state.clone()
+        operation.state_forwards("test_adflpd", new_state)
+        with (
+            CaptureQueriesContext(connection) as ctx,
+            connection.schema_editor() as editor,
+        ):
+            operation.database_forwards("test_adflpd", editor, project_state, new_state)
+
+        self.assertColumnNotNull("test_adflpd_pony", "name")
+        # The above fails on Oracle DB
+
+        table_description = self.get_table_description("test_adflpd_pony")
+        field_description = table_description[-1]
+        self.assertEqual(field_description.name, "name")
+        self.assertIsNone(field_description.default)
+
     def test_alter_field_add_database_default(self):
         app_label = "test_alfladd"
         project_state = self.set_up_test_model(app_label)
